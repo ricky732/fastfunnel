@@ -1,0 +1,15 @@
+stages:
+  - test
+
+dymola-simple-test:
+  stage: test
+  tags:
+    - windows      # tag del tuo runner Windows con Dymola installato
+    - dymola
+  script:
+    - pwsh -NoProfile -ExecutionPolicy Bypass -File .\Run-DymolaTest.ps1
+  artifacts:
+    when: always   # salva log e .mat anche se il test fallisce
+    paths:
+      - out/
+    expire_in: 1 week
