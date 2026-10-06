@@ -1,26 +1,41 @@
 import os, numpy as np
 
-def _upper(x, xr, tx, f):  # bordo superiore dell'unione dei rettangoli (xr±tx, f) collegati lungo la curva
+def _envelope(x, xr, f, tx, ty):
+    """Bordo superiore dell'ellisse (tx, ty) fatta scorrere lungo la polilinea (xr, f)."""
+    n = len(xr)
+    dxr, df = np.diff(xr), np.diff(f)
+    a, b = (tx[:-1] + tx[1:]) / 2, (ty[:-1] + ty[1:]) / 2   # semiassi medi del tratto
+    ok = dxr > 0                                            # tratti verticali (eventi): solo archi
+    m = np.where(ok, df / np.where(ok, dxr, 1), 0)
+    d = np.hypot(m * a, b)
+    sx, sy = -m * a * a / d, b * b / d                      # punto di tangenza
     l, r = np.searchsorted(xr + tx, x), np.searchsorted(xr - tx, x, 'right')
-    k = np.log2(np.maximum(r - l, 1)).astype(int)
-    S = [f]  # sparse table: S[j][i] = max(f[i : i+2^j])
-    for j in range(k.max()): S.append(np.maximum(S[-1], np.r_[S[-1][2**j:], S[-1][-2**j:]]))
-    S = np.stack(S); top = np.maximum(S[k, np.minimum(l, len(xr) - 1)], S[k, np.maximum(r - 2**k, 0)])
-    return np.maximum(np.where(l < r, top, -np.inf), np.maximum(np.interp(x, xr - tx, f), np.interp(x, xr + tx, f)))
+    up = np.full(x.shape, -np.inf)
+    for j in range(-1, int((r - l).max(initial=0)) + 1):
+        i = np.clip(l + j, 0, n - 1)                        # archi di ellisse sui vertici
+        q = (x - xr[i]) / tx[i]
+        up = np.maximum(up, np.where(np.abs(q) <= 1,
+                        f[i] + ty[i] * np.sqrt(np.clip(1 - q * q, 0, None)), -np.inf))
+        s = np.clip(l + j, 0, n - 2)                        # segmenti traslati
+        u = x - xr[s] - sx[s]
+        up = np.maximum(up, np.where(ok[s] & (u >= 0) & (u <= dxr[s]),
+                        f[s] + sy[s] + m[s] * u, -np.inf))
+    return up
 
 def compareAndReport(xReference, yReference, xTest, yTest, outputDirectory=None,
                      atolx=0, atoly=0, ltolx=0, ltoly=0, rtolx=0, rtoly=0):
-    """Una variabile, come pyfunnel. Ritorna True se fallisce; scrive errors.csv solo se fallisce e outputDirectory è dato."""
+    """Una variabile, come pyfunnel (funnel ellittico). Ritorna True se fallisce."""
     xr, yr, xt, yt = (np.asarray(v, float) for v in (xReference, yReference, xTest, yTest))
     tx = np.maximum(max(atolx, rtolx * np.ptp(xr)), ltolx * np.abs(xr))
     ty = np.maximum(max(atoly, rtoly * np.ptp(yr)), ltoly * np.abs(yr))
-    tx[tx == 0] = max(rtolx * max(xr.max(), -xr.min()), 1e-10)  # stessi fallback del C
+    tx[tx == 0] = max(rtolx * max(xr.max(), -xr.min()), 1e-10)
     ty[ty == 0] = max(rtoly * max(yr.max(), -yr.min()), 1e-10)
-    up, lo = _upper(xt, xr, tx, yr + ty), -_upper(xt, xr, tx, ty - yr)
+    up, lo = _envelope(xt, xr, yr, tx, ty), -_envelope(xt, xr, -yr, tx, ty)
     err = np.maximum(yt - up, 0) + np.maximum(lo - yt, 0)
     if err.any() and outputDirectory:
         os.makedirs(outputDirectory, exist_ok=True)
-        np.savetxt(os.path.join(outputDirectory, 'errors.csv'), np.c_[xt, yt, lo, up, err], delimiter=',',
-                   header='x,test,lowerBound,upperBound,error', comments='')
+        np.savetxt(os.path.join(outputDirectory, 'errors.csv'), np.c_[xt, yt, lo, up, err],
+                   delimiter=',', header='x,test,lowerBound,upperBound,error', comments='')
     return bool(err.any())
+
 
