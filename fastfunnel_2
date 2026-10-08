@@ -1,0 +1,17 @@
+import numpy as np, pandas as pd
+
+def maschera(y, win=101, k=2.0, ns=5, frac=0.5):
+    """True = campione da tenere: toglie transitorio iniziale e spike."""
+    s, n = pd.Series(y, dtype=float), len(y)
+    eps = 1e-3 * np.subtract(*np.percentile(y, [99, 1]))          # 0.1% del range
+    roll = lambda x, w: x.rolling(w, center=True, min_periods=1)
+    def fuori(x):                                                 # Hampel con soglia minima
+        r = (x - roll(x, 11).median()).abs()
+        return r > np.maximum(ns * 1.4826 * roll(r, win).median(), eps)
+    d2 = s.diff().diff().shift(-1).fillna(0)                      # derivata seconda centrata
+    sp = roll(fuori(s) & roll(fuori(d2), 3).max().astype(bool), 5).max().astype(bool)
+    std = roll(s.where(~sp, roll(s, 11).median()), win).std().fillna(0).to_numpy()
+    alto = std > max(k * np.median(std[n // 2:]), eps)            # attivita' > k x regime
+    alto[int(frac * n):] = False
+    i0 = min(alto.nonzero()[0].max() + win // 2, n - 1) if alto.any() else 0
+    return (np.arange(n) >= i0) & ~sp.to_numpy()
