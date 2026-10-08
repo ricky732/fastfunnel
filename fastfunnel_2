@@ -1,17 +1,19 @@
 import numpy as np, pandas as pd
 
-def maschera(y, win=101, k=2.0, ns=5, frac=0.5):
-    """True = campione da tenere: toglie transitorio iniziale e spike."""
+def maschera(y, win=101, k=5.0, ns=8, amp=0.10, frac=0.3):
+    """True = campione da tenere. Toglie solo il transitorio iniziale violento e gli spike grandi."""
     s, n = pd.Series(y, dtype=float), len(y)
-    eps = 1e-3 * np.subtract(*np.percentile(y, [99, 1]))          # 0.1% del range
+    rng = np.subtract(*np.percentile(y, [99, 1]))                 # range robusto
     roll = lambda x, w: x.rolling(w, center=True, min_periods=1)
-    def fuori(x):                                                 # Hampel con soglia minima
+    def fuori(x, nsig, floor):                                    # Hampel con soglia minima
         r = (x - roll(x, 11).median()).abs()
-        return r > np.maximum(ns * 1.4826 * roll(r, win).median(), eps)
+        return r > np.maximum(nsig * 1.4826 * roll(r, win).median(), floor)
     d2 = s.diff().diff().shift(-1).fillna(0)                      # derivata seconda centrata
-    sp = roll(fuori(s) & roll(fuori(d2), 3).max().astype(bool), 5).max().astype(bool)
+    A = fuori(s, ns, amp * rng)                                   # grande: > ns sigma E > amp*range
+    B = roll(fuori(d2, 5, 1e-3 * rng), 3).max().astype(bool)      # forma da spike, non gradino
+    sp = roll(A & B, 3).max().astype(bool)                        # +-1 campione
     std = roll(s.where(~sp, roll(s, 11).median()), win).std().fillna(0).to_numpy()
-    alto = std > max(k * np.median(std[n // 2:]), eps)            # attivita' > k x regime
+    alto = std > max(k * np.median(std[n // 2:]), 0.02 * rng)     # agitazione > k x regime
     alto[int(frac * n):] = False
-    i0 = min(alto.nonzero()[0].max() + win // 2, n - 1) if alto.any() else 0
+    i0 = alto.nonzero()[0].max() if alto.any() else 0
     return (np.arange(n) >= i0) & ~sp.to_numpy()
